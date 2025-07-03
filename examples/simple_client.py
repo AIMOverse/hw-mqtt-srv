@@ -15,9 +15,10 @@ from pathlib import Path
 import paho.mqtt.client as mqtt
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.mqtt.messages import AudioRequestMessage, MessageParser, MessageType
+from src.mqtt.messages import AudioRequestMessage, AudioResponseMessage, ErrorMessage, MessageParser, MessageType
+from typing import Optional
 
 
 class SimpleIoTClient:
@@ -28,8 +29,7 @@ class SimpleIoTClient:
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.client = mqtt.Client(
-            client_id=f"iot-client-{device_id}",
-            callback_api_version=mqtt.CallbackAPIVersion.VERSION2
+            client_id=f"iot-client-{device_id}"
         )
         
         # Setup callbacks
@@ -64,7 +64,7 @@ class SimpleIoTClient:
         self.client.loop_stop()
         self.client.disconnect()
     
-    def _on_connect(self, client: mqtt.Client, userdata, flags, rc, properties=None) -> None:
+    def _on_connect(self, client: mqtt.Client, userdata, flags, rc) -> None:
         """Callback for connection."""
         if rc == 0:
             print(f"Device {self.device_id} connected successfully")
@@ -76,7 +76,7 @@ class SimpleIoTClient:
         else:
             print(f"Failed to connect with result code {rc}")
     
-    def _on_disconnect(self, client: mqtt.Client, userdata, flags, rc, properties=None) -> None:
+    def _on_disconnect(self, client: mqtt.Client, userdata, rc) -> None:
         """Callback for disconnection."""
         print(f"Device {self.device_id} disconnected")
         self.connected = False
@@ -86,7 +86,7 @@ class SimpleIoTClient:
         try:
             message = MessageParser.parse_message(msg.payload)
             
-            if message.message_type == MessageType.AUDIO_RESPONSE:
+            if message.message_type == MessageType.AUDIO_RESPONSE and isinstance(message, AudioResponseMessage):
                 self.responses_received += 1
                 print(f"\n--- Audio Response #{self.responses_received} ---")
                 print(f"Session ID: {message.session_id}")
@@ -96,7 +96,7 @@ class SimpleIoTClient:
                 print(f"Audio data size: {len(message.get_audio_bytes())} bytes")
                 print("----------------------------------------")
                 
-            elif message.message_type == MessageType.ERROR:
+            elif message.message_type == MessageType.ERROR and isinstance(message, ErrorMessage):
                 print(f"\n--- Error Response ---")
                 print(f"Error code: {message.error_code}")
                 print(f"Error message: {message.error_message}")
@@ -108,11 +108,11 @@ class SimpleIoTClient:
     def send_audio_request(
         self, 
         audio_data: bytes, 
-        session_id: str = None,
-        language: str = None,
-        voice: str = None,
-        instructions: str = None
-    ) -> str:
+        session_id: Optional[str] = None,
+        language: Optional[str] = None,
+        voice: Optional[str] = None,
+        instructions: Optional[str] = None
+    ) -> Optional[str]:
         """Send an audio request to the server."""
         
         # Create audio request message
