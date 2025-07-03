@@ -75,12 +75,18 @@ class MQTTAIServer:
         # Processing settings
         self.max_concurrent_sessions = self.server_config.get("max_concurrent_sessions", 50)
         self.session_timeout_seconds = self.server_config.get("session_timeout_seconds", 300)
+        
+        # Event loop for thread-safe asyncio operations
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
     
     async def start(self) -> None:
         """Start the MQTT AI server."""
         logger.info("Starting MQTT AI Server")
         
         try:
+            # Store the current event loop for thread-safe operations
+            self._loop = asyncio.get_running_loop()
+            
             # Initialize AI service
             await self.ai_service.initialize()
             
@@ -221,7 +227,11 @@ class MQTTAIServer:
     
     def _on_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
         """Callback for when a message is received."""
-        asyncio.create_task(self._handle_message(msg))
+        if self._loop and not self._loop.is_closed():
+            # Schedule the coroutine to run in the main event loop thread
+            asyncio.run_coroutine_threadsafe(self._handle_message(msg), self._loop)
+        else:
+            logger.error("Event loop not available for handling message")
     
     async def _handle_message(self, msg: mqtt.MQTTMessage) -> None:
         """Handle incoming MQTT message."""

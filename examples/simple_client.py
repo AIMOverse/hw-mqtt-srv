@@ -24,7 +24,7 @@ from typing import Optional
 class SimpleIoTClient:
     """Simple IoT client for testing the MQTT AI Agent server."""
     
-    def __init__(self, device_id: str, broker_host: str = "localhost", broker_port: int = 1883):
+    def __init__(self, device_id: str, broker_host: str = "broker.emqx.io", broker_port: int = 1883):
         self.device_id = device_id
         self.broker_host = broker_host
         self.broker_port = broker_port
@@ -64,7 +64,7 @@ class SimpleIoTClient:
         self.client.loop_stop()
         self.client.disconnect()
     
-    def _on_connect(self, client: mqtt.Client, userdata, flags, rc) -> None:
+    def _on_connect(self, client: mqtt.Client, userdata, flags, rc, properties=None) -> None:
         """Callback for connection."""
         if rc == 0:
             print(f"Device {self.device_id} connected successfully")
@@ -76,7 +76,7 @@ class SimpleIoTClient:
         else:
             print(f"Failed to connect with result code {rc}")
     
-    def _on_disconnect(self, client: mqtt.Client, userdata, rc) -> None:
+    def _on_disconnect(self, client: mqtt.Client, userdata, rc, properties=None) -> None:
         """Callback for disconnection."""
         print(f"Device {self.device_id} disconnected")
         self.connected = False
@@ -156,7 +156,7 @@ async def main():
     
     # Configuration
     device_id = "test-device-001"
-    broker_host = "localhost"  # Change to your MQTT broker
+    broker_host = "broker.emqx.io"  # Public MQTT broker for testing
     broker_port = 1883
     
     # Create and connect client

@@ -96,6 +96,19 @@ class AudioRequestMessage(AudioMessage):
         return base64.b64decode(self.audio_data)
     
     @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AudioRequestMessage":
+        """Create AudioRequestMessage from dictionary with proper nested object conversion."""
+        # Convert message_type back to enum
+        if "message_type" in data:
+            data["message_type"] = MessageType(data["message_type"])
+        
+        # Convert audio_metadata dict to AudioMetadata object
+        if "audio_metadata" in data and isinstance(data["audio_metadata"], dict):
+            data["audio_metadata"] = AudioMetadata(**data["audio_metadata"])
+        
+        return cls(**data)
+    
+    @classmethod
     def create(
         cls,
         device_id: str,
@@ -150,6 +163,19 @@ class AudioResponseMessage(AudioMessage):
     def get_audio_bytes(self) -> bytes:
         """Decode base64 audio data to bytes."""
         return base64.b64decode(self.audio_data)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AudioResponseMessage":
+        """Create AudioResponseMessage from dictionary with proper nested object conversion."""
+        # Convert message_type back to enum
+        if "message_type" in data:
+            data["message_type"] = MessageType(data["message_type"])
+        
+        # Convert audio_metadata dict to AudioMetadata object
+        if "audio_metadata" in data and isinstance(data["audio_metadata"], dict):
+            data["audio_metadata"] = AudioMetadata(**data["audio_metadata"])
+        
+        return cls(**data)
     
     @classmethod
     def create(
