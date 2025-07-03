@@ -8,7 +8,8 @@ import asyncio
 import json
 import base64
 import time
-from typing import AsyncIterator, Dict, Any, Optional
+from typing import AsyncIterator, Dict, Any, Optional, Union
+
 import websockets
 from loguru import logger
 
@@ -34,7 +35,7 @@ class OpenAIRealtimeService(AIServiceInterface):
         self.api_key = config.get("api_key")
         self.model = config.get("model", "gpt-4o-realtime-preview")
         self.base_url = config.get("base_url", "wss://api.openai.com/v1/realtime")
-        self.websocket: Optional[websockets.WebSocketServerProtocol] = None
+        self.websocket: Optional[Any] = None
         self._active_sessions: Dict[str, Dict[str, Any]] = {}
         
         if not self.api_key:
@@ -102,14 +103,14 @@ class OpenAIRealtimeService(AIServiceInterface):
                 )
                 chunk_id += 1
                 
-        except websockets.exceptions.ConnectionClosed as e:
-            logger.error(f"WebSocket connection closed: {e}")
+        except Exception as e:
+            logger.error(f"WebSocket connection error: {e}")
             # Remove failed session
             self._active_sessions.pop(session_key, None)
-            raise AIServiceConnectionError(f"Connection lost: {e}")
-        except Exception as e:
-            logger.error(f"Error processing audio stream: {e}")
-            raise AIServiceProcessingError(f"Processing failed: {e}")
+            if "Connection" in str(e):
+                raise AIServiceConnectionError(f"Connection lost: {e}")
+            else:
+                raise AIServiceProcessingError(f"Processing failed: {e}")
     
     async def health_check(self) -> bool:
         """Check if OpenAI Realtime API is accessible."""
@@ -188,7 +189,7 @@ class OpenAIRealtimeService(AIServiceInterface):
         self._active_sessions[session_key] = session_data
         return session_data
     
-    async def _create_websocket_connection(self) -> websockets.WebSocketServerProtocol:
+    async def _create_websocket_connection(self) -> Any:
         """Create a new WebSocket connection to OpenAI Realtime API."""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -208,12 +209,13 @@ class OpenAIRealtimeService(AIServiceInterface):
     
     async def _initialize_session(
         self, 
-        websocket: websockets.WebSocketServerProtocol, 
+        websocket: Any, 
         audio_request: AudioRequest
     ) -> None:
         """Initialize the OpenAI Realtime session."""
         voice = audio_request.voice or "alloy"
-        instructions = audio_request.additional_config.get(
+        additional_config = audio_request.additional_config or {}
+        instructions = additional_config.get(
             "instructions", 
             "You are a helpful AI assistant responding to voice commands from IoT devices."
         )
@@ -243,7 +245,7 @@ class OpenAIRealtimeService(AIServiceInterface):
     
     async def _send_audio_data(
         self, 
-        websocket: websockets.WebSocketServerProtocol, 
+        websocket: Any, 
         audio_data: bytes
     ) -> None:
         """Send audio data to the OpenAI Realtime API."""
@@ -270,7 +272,7 @@ class OpenAIRealtimeService(AIServiceInterface):
     
     async def _receive_audio_responses(
         self, 
-        websocket: websockets.WebSocketServerProtocol,
+        websocket: Any,
         session_key: str
     ) -> AsyncIterator[Dict[str, Any]]:
         """Receive and process audio responses from OpenAI Realtime API."""
@@ -316,11 +318,8 @@ class OpenAIRealtimeService(AIServiceInterface):
                     
         except asyncio.TimeoutError:
             logger.warning(f"Timeout waiting for response in session {session_key}")
-        except websockets.exceptions.ConnectionClosed:
+        except Exception:
             logger.info(f"WebSocket connection closed for session {session_key}")
-        except Exception as e:
-            logger.error(f"Error receiving responses: {e}")
-            raise
     
     async def _convert_to_pcm16(self, audio_data: bytes) -> bytes:
         """Convert audio data to PCM16 format (placeholder implementation)."""

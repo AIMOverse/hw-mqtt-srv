@@ -7,7 +7,7 @@ and processes audio through the AI services.
 
 import asyncio
 import time
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional, Set, Union
 from contextlib import asynccontextmanager
 
 import paho.mqtt.client as mqtt
@@ -73,8 +73,8 @@ class MQTTAIServer:
         self.health_topic = mqtt_config.get("health_topic", "iot/server/health")
         
         # Processing settings
-        self.max_concurrent_sessions = server_config.get("max_concurrent_sessions", 50)
-        self.session_timeout_seconds = server_config.get("session_timeout_seconds", 300)
+        self.max_concurrent_sessions = self.server_config.get("max_concurrent_sessions", 50)
+        self.session_timeout_seconds = self.server_config.get("session_timeout_seconds", 300)
     
     async def start(self) -> None:
         """Start the MQTT AI server."""
@@ -109,9 +109,14 @@ class MQTTAIServer:
         self._running = False
         
         # Disconnect MQTT client
-        if self.mqtt_client and self.mqtt_client.is_connected():
-            self.mqtt_client.disconnect()
-            self.mqtt_client.loop_stop()
+        if self.mqtt_client:
+            try:
+                if hasattr(self.mqtt_client, 'is_connected') and self.mqtt_client.is_connected():
+                    self.mqtt_client.disconnect()
+                if hasattr(self.mqtt_client, 'loop_stop'):
+                    self.mqtt_client.loop_stop()
+            except Exception as e:
+                logger.warning(f"Error during MQTT client disconnect: {e}")
         
         # Cleanup AI service
         await self.ai_service.cleanup()
@@ -130,8 +135,7 @@ class MQTTAIServer:
     async def _setup_mqtt_client(self) -> None:
         """Setup the MQTT client with callbacks."""
         self.mqtt_client = mqtt.Client(
-            client_id=self._client_id,
-            callback_api_version=mqtt.CallbackAPIVersion.VERSION2
+            client_id=self._client_id
         )
         
         # Set authentication if provided
@@ -167,23 +171,29 @@ class MQTTAIServer:
         logger.info(f"Connecting to MQTT broker at {host}:{port}")
         
         try:
+            if self.mqtt_client is None:
+                raise RuntimeError("MQTT client not initialized")
+                
             self.mqtt_client.connect(host, port, keepalive)
             self.mqtt_client.loop_start()
             
             # Wait for connection
             timeout = 10
             start_time = time.time()
-            while not self.mqtt_client.is_connected() and (time.time() - start_time) < timeout:
+            while (hasattr(self.mqtt_client, 'is_connected') and 
+                   not self.mqtt_client.is_connected() and 
+                   (time.time() - start_time) < timeout):
                 await asyncio.sleep(0.1)
             
-            if not self.mqtt_client.is_connected():
+            if (hasattr(self.mqtt_client, 'is_connected') and 
+                not self.mqtt_client.is_connected()):
                 raise ConnectionError("Failed to connect to MQTT broker within timeout")
                 
         except Exception as e:
             logger.error(f"Failed to connect to MQTT broker: {e}")
             raise
     
-    def _on_connect(self, client: mqtt.Client, userdata: Any, flags: Dict[str, Any], rc: int, properties: Any = None) -> None:
+    def _on_connect(self, client: mqtt.Client, userdata: Any, flags: Dict[str, Any], rc: int) -> None:
         """Callback for when the client connects to the broker."""
         if rc == 0:
             logger.info("Connected to MQTT broker successfully")
@@ -198,14 +208,14 @@ class MQTTAIServer:
         else:
             logger.error(f"Failed to connect to MQTT broker with result code {rc}")
     
-    def _on_disconnect(self, client: mqtt.Client, userdata: Any, flags: Dict[str, Any], rc: int, properties: Any = None) -> None:
+    def _on_disconnect(self, client: mqtt.Client, userdata: Any, rc: int) -> None:
         """Callback for when the client disconnects from the broker."""
         if rc != 0:
             logger.warning(f"Unexpected disconnection from MQTT broker (rc: {rc})")
         else:
             logger.info("Disconnected from MQTT broker")
     
-    def _on_subscribe(self, client: mqtt.Client, userdata: Any, mid: int, reason_code_list: Any, properties: Any = None) -> None:
+    def _on_subscribe(self, client: mqtt.Client, userdata: Any, mid: int, granted_qos: Any) -> None:
         """Callback for when subscription is acknowledged."""
         logger.info(f"Subscribed to topics successfully (mid: {mid})")
     
@@ -302,13 +312,17 @@ class MQTTAIServer:
         topic = self.response_topic_template.format(device_id=response.device_id)
         
         try:
+            if self.mqtt_client is None:
+                logger.error("MQTT client not available for publishing response")
+                return
+                
             result = self.mqtt_client.publish(
                 topic,
                 response.to_json(),
                 qos=1
             )
             
-            if result.rc != mqtt.MQTT_ERR_SUCCESS:
+            if hasattr(result, 'rc') and result.rc != mqtt.MQTT_ERR_SUCCESS:
                 logger.error(f"Failed to publish response: {result.rc}")
             else:
                 self._message_stats["responses_sent"] += 1
@@ -334,7 +348,8 @@ class MQTTAIServer:
         topic = self.response_topic_template.format(device_id=original_request.device_id)
         
         try:
-            self.mqtt_client.publish(topic, error_msg.to_json(), qos=1)
+            if self.mqtt_client is not None:
+                self.mqtt_client.publish(topic, error_msg.to_json(), qos=1)
         except Exception as e:
             logger.error(f"Error sending error response: {e}")
     
@@ -348,12 +363,13 @@ class MQTTAIServer:
                 
                 health_message = self._create_health_message(status)
                 
-                self.mqtt_client.publish(
-                    self.health_topic,
-                    health_message.to_json(),
-                    qos=1,
-                    retain=True
-                )
+                if self.mqtt_client is not None:
+                    self.mqtt_client.publish(
+                        self.health_topic,
+                        health_message.to_json(),
+                        qos=1,
+                        retain=True
+                    )
                 
                 # Wait before next health check
                 await asyncio.sleep(30)
@@ -402,6 +418,7 @@ class MQTTAIServer:
             "uptime_seconds": time.time() - self._start_time,
             "active_sessions": len(self._active_sessions),
             "is_running": self._running,
-            "mqtt_connected": self.mqtt_client.is_connected() if self.mqtt_client else False,
+            "mqtt_connected": (hasattr(self.mqtt_client, 'is_connected') and 
+                              self.mqtt_client.is_connected()) if self.mqtt_client else False,
             "message_stats": self._message_stats.copy()
         } 

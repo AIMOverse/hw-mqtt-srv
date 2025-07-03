@@ -78,7 +78,12 @@ class AIServiceInterface(ABC):
         Yields:
             AudioResponse: Processed audio response chunks
         """
-        pass
+        # This should be implemented as an async generator that yields AudioResponse objects
+        # Example implementation:
+        # yield AudioResponse(audio_data=b"", transcript="", ...)
+        if False:  # This ensures the method is recognized as an async generator
+            yield AudioResponse(audio_data=b"")
+        raise NotImplementedError("Must be implemented as async generator")
     
     @abstractmethod
     async def health_check(self) -> bool:
