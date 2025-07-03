@@ -141,12 +141,22 @@ class SimpleIoTClient:
             return None
 
 
-def create_sample_audio() -> bytes:
-    """Create a sample audio data for testing (placeholder)."""
-    # This is just dummy data for testing
-    # In a real scenario, this would be actual MP3 audio data
-    sample_text = "Hello, this is a test audio message from an IoT device."
-    return sample_text.encode('utf-8')
+def load_test_audio() -> bytes:
+    """Load the test.mp3 audio file."""
+    # Path to the test audio file
+    audio_file_path = Path(__file__).parent.parent / "audio" / "test.mp3"
+    
+    if not audio_file_path.exists():
+        raise FileNotFoundError(f"Test audio file not found at: {audio_file_path}")
+    
+    # Read the MP3 file
+    with open(audio_file_path, 'rb') as f:
+        audio_data = f.read()
+    
+    print(f"Loaded test audio file: {audio_file_path}")
+    print(f"Audio file size: {len(audio_data)} bytes")
+    
+    return audio_data
 
 
 async def main():
@@ -165,11 +175,11 @@ async def main():
     try:
         client.connect()
         
-        # Create sample audio data
-        audio_data = create_sample_audio()
+        # Load test audio data
+        audio_data = load_test_audio()
         
         print(f"\nSending test audio request...")
-        print(f"Audio data size: {len(audio_data)} bytes")
+        print(f"MP3 audio data size: {len(audio_data)} bytes")
         
         # Send audio request
         session_id = client.send_audio_request(
