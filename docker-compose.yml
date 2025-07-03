@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  mqtt-ai-server:
+    build: .
+    container_name: mqtt-ai-server
+    restart: unless-stopped
+    
+    # Environment variables
+    environment:
+      # MQTT Configuration
+      MQTT_HOST: ${MQTT_HOST:-broker.emqx.io}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_CLIENT_ID: ${MQTT_CLIENT_ID:-mqtt-ai-server}
+      MQTT_USE_TLS: ${MQTT_USE_TLS:-false}
+      MQTT_KEEPALIVE: ${MQTT_KEEPALIVE:-60}
+      
+      # MQTT Topics
+      MQTT_REQUEST_TOPIC: ${MQTT_REQUEST_TOPIC:-iot/+/audio_request}
+      MQTT_RESPONSE_TOPIC: ${MQTT_RESPONSE_TOPIC:-iot/{device_id}/audio_response}
+      MQTT_HEALTH_TOPIC: ${MQTT_HEALTH_TOPIC:-iot/server/health}
+      
+      # OpenAI Configuration
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-realtime-preview}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-wss://api.openai.com/v1/realtime}
+      OPENAI_VOICE: ${OPENAI_VOICE:-alloy}
+      OPENAI_INSTRUCTIONS: ${OPENAI_INSTRUCTIONS:-You are a helpful AI assistant responding to voice commands from IoT devices.}
+      
+      # Server Configuration
+      MAX_CONCURRENT_SESSIONS: ${MAX_CONCURRENT_SESSIONS:-50}
+      SESSION_TIMEOUT_SECONDS: ${SESSION_TIMEOUT_SECONDS:-300}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENABLE_HEALTH_CHECKS: ${ENABLE_HEALTH_CHECKS:-true}
+      HEALTH_CHECK_INTERVAL: ${HEALTH_CHECK_INTERVAL:-30}
+    
+    # Volume mounts
+    volumes:
+      - ./logs:/app/logs
+      - ./audio:/app/audio:ro
+    
+    # Network mode
+    network_mode: bridge
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('${MQTT_HOST:-broker.emqx.io}', ${MQTT_PORT:-1883}), timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Optional: Add a local MQTT broker for development
+  # mosquitto:
+  #   image: eclipse-mosquitto:2.0
+  #   container_name: mqtt-broker
+  #   restart: unless-stopped
+  #   ports:
+  #     - "1883:1883"
+  #     - "9001:9001"
+  #   volumes:
+  #     - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+  #   networks:
+  #     - mqtt-ai-network
+
+# networks:
+#   mqtt-ai-network:
+#     driver: bridge 
