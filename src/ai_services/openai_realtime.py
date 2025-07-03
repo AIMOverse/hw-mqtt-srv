@@ -34,6 +34,7 @@ class OpenAIRealtimeService(AIServiceInterface):
         super().__init__(config)
         self.api_key = config.get("api_key")
         self.model = config.get("model", "gpt-4o-realtime-preview")
+        # Base URL from configuration (supports environment variable OPENAI_BASE_URL)
         self.base_url = config.get("base_url", "wss://api.openai.com/v1/realtime")
         self.websocket: Optional[Any] = None
         self._active_sessions: Dict[str, Dict[str, Any]] = {}
@@ -115,35 +116,85 @@ class OpenAIRealtimeService(AIServiceInterface):
     async def health_check(self) -> bool:
         """Check if OpenAI Realtime API is accessible."""
         try:
-            # Create a test connection
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "OpenAI-Beta": "realtime=v1"
-            }
+            # Use the configured base URL from environment
+            realtime_url = f"{self.base_url}?model={self.model}"
             
-            async with websockets.connect(
-                f"{self.base_url}?model={self.model}",
-                extra_headers=headers,
-                timeout=10
-            ) as websocket:
-                # Send a simple session update
-                await websocket.send(json.dumps({
-                    "type": "session.update",
-                    "session": {
-                        "modalities": ["text", "audio"],
-                        "instructions": "You are a helpful assistant.",
-                        "voice": "alloy"
+            # Try different connection approaches for compatibility
+            websocket = None
+            
+            # Method 1: Try with additional_headers (newer websockets)
+            try:
+                headers = [
+                    ("Authorization", f"Bearer {self.api_key}"),
+                    ("OpenAI-Beta", "realtime=v1")
+                ]
+                websocket = await websockets.connect(realtime_url, additional_headers=headers)
+                logger.info("Connected with additional_headers")
+            except (TypeError, AttributeError, Exception) as e:
+                logger.debug(f"additional_headers method failed: {e}")
+                
+            # Method 2: Try with extra_headers (some versions)
+            if not websocket:
+                try:
+                    headers = {
+                        "Authorization": f"Bearer {self.api_key}",
+                        "OpenAI-Beta": "realtime=v1"
                     }
-                }))
-                
-                # Wait for response
-                response = await asyncio.wait_for(websocket.recv(), timeout=5)
-                data = json.loads(response)
-                
-                return data.get("type") == "session.created"
+                    websocket = await websockets.connect(realtime_url, extra_headers=headers)
+                    logger.info("Connected with extra_headers")
+                except (TypeError, AttributeError, Exception) as e:
+                    logger.debug(f"extra_headers method failed: {e}")
+            
+            # Method 3: Basic connection without custom headers
+            if not websocket:
+                try:
+                    logger.warning("Trying basic connection - authentication may fail")
+                    websocket = await websockets.connect(realtime_url)
+                    logger.info("Connected with basic method")
+                except Exception as e:
+                    logger.error(f"Basic connection failed: {e}")
+                    return False
+            
+            # Test the connection
+            if websocket:
+                try:
+                    result = await self._test_websocket_connection(websocket)
+                    await websocket.close()
+                    return result
+                except Exception as e:
+                    logger.error(f"Connection test failed: {e}")
+                    try:
+                        await websocket.close()
+                    except Exception:
+                        pass  # Ignore close errors
+                    return False
+            
+            return False
                 
         except Exception as e:
             logger.error(f"Health check failed: {e}")
+            return False
+    
+    async def _test_websocket_connection(self, websocket: Any) -> bool:
+        """Test WebSocket connection by sending a session update."""
+        try:
+            # Send a simple session update
+            await websocket.send(json.dumps({
+                "type": "session.update",
+                "session": {
+                    "modalities": ["text", "audio"],
+                    "instructions": "You are a helpful assistant.",
+                    "voice": "alloy"
+                }
+            }))
+            
+            # Wait for response
+            response = await asyncio.wait_for(websocket.recv(), timeout=5)
+            data = json.loads(response)
+            
+            return data.get("type") == "session.created"
+        except Exception as e:
+            logger.error(f"WebSocket test failed: {e}")
             return False
     
     def get_supported_features(self) -> Dict[str, bool]:
@@ -191,21 +242,50 @@ class OpenAIRealtimeService(AIServiceInterface):
     
     async def _create_websocket_connection(self) -> Any:
         """Create a new WebSocket connection to OpenAI Realtime API."""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "OpenAI-Beta": "realtime=v1"
-        }
+        # Use the configured base URL from environment
+        realtime_url = f"{self.base_url}?model={self.model}"
         
+        # Try different connection approaches for compatibility
+        websocket = None
+        connection_error = None
+        
+        # Method 1: Try with additional_headers (newer websockets)
         try:
-            websocket = await websockets.connect(
-                f"{self.base_url}?model={self.model}",
-                extra_headers=headers,
-                timeout=30
-            )
+            headers = [
+                ("Authorization", f"Bearer {self.api_key}"),
+                ("OpenAI-Beta", "realtime=v1")
+            ]
+            websocket = await websockets.connect(realtime_url, additional_headers=headers)
+            logger.debug("Connected with additional_headers")
+            return websocket
+        except (TypeError, AttributeError, Exception) as e:
+            connection_error = e
+            logger.debug(f"additional_headers method failed: {e}")
+            
+        # Method 2: Try with extra_headers (some versions)
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "OpenAI-Beta": "realtime=v1"
+            }
+            websocket = await websockets.connect(realtime_url, extra_headers=headers)
+            logger.debug("Connected with extra_headers")
+            return websocket
+        except (TypeError, AttributeError, Exception) as e:
+            connection_error = e
+            logger.debug(f"extra_headers method failed: {e}")
+        
+        # Method 3: Basic connection without custom headers (will likely fail auth)
+        try:
+            logger.warning("Using basic connection - authentication may fail")
+            websocket = await websockets.connect(realtime_url)
+            logger.debug("Connected with basic method")
             return websocket
         except Exception as e:
-            logger.error(f"Failed to create WebSocket connection: {e}")
-            raise AIServiceConnectionError(f"Connection failed: {e}")
+            connection_error = e
+            logger.error(f"All connection methods failed. Last error: {e}")
+            
+        raise AIServiceConnectionError(f"Failed to create WebSocket connection: {connection_error}")
     
     async def _initialize_session(
         self, 
