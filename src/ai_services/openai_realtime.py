@@ -56,7 +56,7 @@ class OpenAIRealtimeService(AIServiceInterface):
         # Close all active sessions
         for session_data in self._active_sessions.values():
             ws = session_data.get("websocket")
-            if ws and not ws.closed:
+            if ws and ws.close_code is None:  # None means connection is still open
                 await ws.close()
         
         self._active_sessions.clear()
@@ -220,7 +220,7 @@ class OpenAIRealtimeService(AIServiceInterface):
         if session_key in self._active_sessions:
             session_data = self._active_sessions[session_key]
             # Check if connection is still alive
-            if not session_data["websocket"].closed:
+            if session_data["websocket"].close_code is None:  # None means connection is still open
                 return session_data
         
         # Create new session

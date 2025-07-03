@@ -254,6 +254,7 @@ class MQTTAIServer:
         start_time = time.time()
         device_id = request.device_id
         session_id = request.session_id
+        processing_time = 0.0  # Initialize processing_time
         
         logger.info(f"Processing audio request from device {device_id} (session: {session_id})")
         
@@ -305,6 +306,7 @@ class MQTTAIServer:
                 # Send response
                 await self._send_audio_response(response_msg)
             
+            processing_time = (time.time() - start_time) * 1000
             self._message_stats["requests_processed"] += 1
             logger.info(f"Completed audio request for device {device_id} in {processing_time:.2f}ms")
             
