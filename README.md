@@ -31,6 +31,7 @@ The server uses an abstract AI service interface, making it easy to swap between
 - OpenAI API key with Realtime API access
 - MQTT broker (e.g., EMQX, Mosquitto)
 - Audio format: MP3, 16kHz, mono, ~10KB chunks
+- **FFmpeg** CLI tools (`ffmpeg`, `ffprobe`) for audio conversion (already installed in the Docker image)
 
 ## 🛠️ Installation
 
@@ -44,10 +45,21 @@ cd hw-mqtt-srv
 ```bash
 # Using UV (recommended)
 uv sync
-
-# Or using pip
-pip install -e .
 ```
+
+> ⚠️  **Local development only**: make sure `ffmpeg` is available on your PATH.  On Ubuntu / Debian:
+> ```bash
+> sudo apt update && sudo apt install -y ffmpeg
+> ```
+> On macOS (Homebrew):
+> ```bash
+> brew install ffmpeg
+> ```
+> On Windows (scoop):
+> ```bash
+> scoop install ffmpeg
+>```
+> 
 
 ### 3. Create configuration
 ```bash
