@@ -18,7 +18,7 @@ import paho.mqtt.client as mqtt
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.mqtt.messages import AudioRequestMessage, AudioResponseMessage, ErrorMessage, MessageParser, MessageType
-from typing import Optional
+from typing import Optional, List
 
 
 class SimpleIoTClient:
@@ -43,6 +43,8 @@ class SimpleIoTClient:
         
         self.connected = False
         self.responses_received = 0
+        self.error_received = False
+        self.should_exit = False
     
     def connect(self) -> None:
         """Connect to MQTT broker."""
@@ -102,28 +104,37 @@ class SimpleIoTClient:
                 print(f"Error message: {message.error_message}")
                 print("----------------------")
                 
+                # Set flags to exit immediately on error
+                self.error_received = True
+                self.should_exit = True
+                print("Error received - client will exit")
+                
         except Exception as e:
             print(f"Error processing message: {e}")
     
-    def send_audio_request(
+    def send_audio_chunk(
         self, 
-        audio_data: bytes, 
-        session_id: Optional[str] = None,
+        audio_chunk: bytes, 
+        session_id: str,
+        chunk_id: int,
+        total_chunks: int,
         language: Optional[str] = None,
         voice: Optional[str] = None,
         instructions: Optional[str] = None
-    ) -> Optional[str]:
-        """Send an audio request to the server."""
+    ) -> bool:
+        """Send an audio chunk to the server."""
         
         # Create audio request message
         request = AudioRequestMessage.create(
             device_id=self.device_id,
-            audio_data=audio_data,
-            session_id=session_id or f"session-{int(time.time())}",
+            audio_data=audio_chunk,
+            session_id=session_id,
             audio_format="mp3",
             language=language,
             voice=voice,
-            instructions=instructions
+            instructions=instructions,
+            chunk_id=chunk_id,
+            total_chunks=total_chunks
         )
         
         # Publish to request topic
@@ -134,15 +145,15 @@ class SimpleIoTClient:
         )
         
         if result.rc == mqtt.MQTT_ERR_SUCCESS:
-            print(f"Sent audio request (session: {request.session_id})")
-            return request.session_id
+            print(f"Sent audio chunk {chunk_id}/{total_chunks} (session: {session_id}) - {len(audio_chunk)} bytes")
+            return True
         else:
-            print(f"Failed to send audio request: {result.rc}")
-            return None
+            print(f"Failed to send audio chunk: {result.rc}")
+            return False
 
 
-def load_test_audio() -> bytes:
-    """Load the test.mp3 audio file."""
+def load_and_chunk_audio(chunk_size: int = 8192) -> List[bytes]:
+    """Load the test.mp3 audio file and split it into chunks."""
     # Path to the test audio file
     audio_file_path = Path(__file__).parent.parent / "audio" / "test.mp3"
     
@@ -156,7 +167,14 @@ def load_test_audio() -> bytes:
     print(f"Loaded test audio file: {audio_file_path}")
     print(f"Audio file size: {len(audio_data)} bytes")
     
-    return audio_data
+    # Split into chunks
+    chunks = []
+    for i in range(0, len(audio_data), chunk_size):
+        chunk = audio_data[i:i + chunk_size]
+        chunks.append(chunk)
+    
+    print(f"Split audio into {len(chunks)} chunks of ~{chunk_size} bytes each")
+    return chunks
 
 
 async def main():
@@ -175,38 +193,60 @@ async def main():
     try:
         client.connect()
         
-        # Load test audio data
-        audio_data = load_test_audio()
+        # Load and chunk test audio data
+        audio_chunks = load_and_chunk_audio(chunk_size=8192)  # 8KB chunks
         
-        print(f"\nSending test audio request...")
-        print(f"MP3 audio data size: {len(audio_data)} bytes")
+        print(f"\nSending test audio request in {len(audio_chunks)} chunks...")
         
-        # Send audio request
-        session_id = client.send_audio_request(
-            audio_data=audio_data,
-            language="en",
-            voice="alloy",
-            instructions="Please respond briefly to this voice message."
-        )
+        # Create session ID
+        session_id = f"session-{int(time.time())}"
         
-        if session_id:
-            print(f"Request sent successfully. Session ID: {session_id}")
+        # Send audio chunks
+        for i, chunk in enumerate(audio_chunks):
+            if client.should_exit:
+                print("Stopping due to error - exiting early")
+                break
+                
+            success = client.send_audio_chunk(
+                audio_chunk=chunk,
+                session_id=session_id,
+                chunk_id=i,
+                total_chunks=len(audio_chunks),
+                language="en",
+                voice="alloy",
+                instructions="Please respond briefly to this voice message."
+            )
+            
+            if not success:
+                print(f"Failed to send chunk {i}, stopping")
+                break
+            
+            # Small delay between chunks to simulate streaming
+            await asyncio.sleep(0.1)
+        
+        if not client.should_exit:
+            print(f"All chunks sent successfully. Session ID: {session_id}")
             print("Waiting for response...")
             
-            # Wait for response
+            # Wait for response or error
             timeout = 30
             start_time = time.time()
-            while client.responses_received == 0 and (time.time() - start_time) < timeout:
+            while (not client.should_exit and 
+                   client.responses_received == 0 and 
+                   (time.time() - start_time) < timeout):
                 await asyncio.sleep(0.5)
             
-            if client.responses_received > 0:
+            if client.error_received:
+                print(f"\nError received - exiting immediately")
+            elif client.responses_received > 0:
                 print(f"\nReceived {client.responses_received} response(s)")
             else:
                 print("\nTimeout: No response received")
         
-        # Keep running for a bit to receive any additional messages
-        print("\nWaiting for additional messages (5 seconds)...")
-        await asyncio.sleep(5)
+        # If no error, wait briefly for any additional messages
+        if not client.should_exit:
+            print("\nWaiting for additional messages (3 seconds)...")
+            await asyncio.sleep(3)
         
     except Exception as e:
         print(f"Error: {e}")

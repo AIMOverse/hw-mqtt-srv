@@ -8,10 +8,12 @@ import asyncio
 import json
 import base64
 import time
+import io
 from typing import AsyncIterator, Dict, Any, Optional, Union
 
 import websockets
 from loguru import logger
+from pydub import AudioSegment
 
 from .base import (
     AIServiceInterface, 
@@ -409,7 +411,11 @@ class OpenAIRealtimeService(AIServiceInterface):
                 
                 elif message_type == "error":
                     error_msg = data.get("error", {}).get("message", "Unknown error")
-                    logger.error(f"OpenAI Realtime API error: {error_msg}")
+                    # Treat invalid client audio errors as warnings
+                    if "Invalid 'audio'" in error_msg or "buffer too small" in error_msg:
+                        logger.warning(f"OpenAI Realtime API client error: {error_msg}")
+                    else:
+                        logger.error(f"OpenAI Realtime API error: {error_msg}")
                     raise AIServiceProcessingError(f"API error: {error_msg}")
                     
         except asyncio.TimeoutError:
@@ -423,13 +429,35 @@ class OpenAIRealtimeService(AIServiceInterface):
             raise AIServiceProcessingError(f"WebSocket communication error: {e}")
     
     async def _convert_to_pcm16(self, audio_data: bytes) -> bytes:
-        """Convert audio data to PCM16 format (placeholder implementation)."""
-        # TODO: Implement actual audio conversion using pydub or similar
-        # For now, assume input is already in correct format
-        return audio_data
-    
+        """Convert MP3 (or other) audio data to PCM16 24kHz mono."""
+        try:
+            # Decode MP3 to AudioSegment
+            audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="mp3")
+            # Ensure 24kHz, mono, 16-bit
+            audio_segment = (
+                audio_segment.set_frame_rate(24000)
+                .set_channels(1)
+                .set_sample_width(2)  # 2 bytes = 16-bit
+            )
+            return audio_segment.raw_data
+        except Exception as e:
+            logger.error(f"Audio conversion to PCM16 failed: {e}")
+            raise AIServiceProcessingError(f"Failed to convert audio to PCM16: {e}")
+
     async def _convert_from_pcm16(self, pcm_data: bytes) -> bytes:
-        """Convert PCM16 data to MP3 format (placeholder implementation)."""
-        # TODO: Implement actual audio conversion using pydub or similar
-        # For now, return as-is
-        return pcm_data 
+        """Convert PCM16 24kHz mono data back to MP3 for client playback."""
+        try:
+            audio_segment = AudioSegment(
+                data=pcm_data,
+                sample_width=2,
+                frame_rate=24000,
+                channels=1,
+            )
+            buf = io.BytesIO()
+            # Export to MP3 with low bitrate to keep payload small
+            audio_segment.export(buf, format="mp3", bitrate="32k")
+            return buf.getvalue()
+        except Exception as e:
+            logger.error(f"Audio conversion from PCM16 failed: {e}")
+            # If conversion fails, return the raw PCM so client can still decode if desired
+            return pcm_data 

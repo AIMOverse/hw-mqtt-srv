@@ -22,6 +22,7 @@ from .messages import (
     HealthCheckMessage,
     MessageType
 )
+from ..ai_services.base import AIServiceProcessingError
 
 
 class MQTTAIServer:
@@ -310,6 +311,10 @@ class MQTTAIServer:
             self._message_stats["requests_processed"] += 1
             logger.info(f"Completed audio request for device {device_id} in {processing_time:.2f}ms")
             
+        except AIServiceProcessingError as e:
+            logger.warning(f"Client error processing audio request: {e}")
+            await self._send_error_response(request, "PROCESSING_ERROR", str(e))
+            self._message_stats["errors"] += 1
         except Exception as e:
             logger.error(f"Error processing audio request: {e}")
             await self._send_error_response(request, "PROCESSING_ERROR", str(e))
