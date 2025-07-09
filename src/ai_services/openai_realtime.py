@@ -329,26 +329,42 @@ class OpenAIRealtimeService(AIServiceInterface):
         audio_data: bytes
     ) -> None:
         """Send audio data to the OpenAI Realtime API."""
-        # Convert MP3 to PCM16 if needed
-        pcm_data = await self._convert_to_pcm16(audio_data)
-        
-        # Send audio data
-        audio_message = {
-            "type": "input_audio_buffer.append",
-            "audio": base64.b64encode(pcm_data).decode()
-        }
-        
-        await websocket.send(json.dumps(audio_message))
-        
-        # Commit the audio buffer
-        await websocket.send(json.dumps({
-            "type": "input_audio_buffer.commit"
-        }))
-        
-        # Request response generation
-        await websocket.send(json.dumps({
-            "type": "response.create"
-        }))
+        try:
+            # Convert MP3 to PCM16 if needed
+            pcm_data = await self._convert_to_pcm16(audio_data)
+            
+            # Validate audio data
+            if not pcm_data:
+                raise AIServiceProcessingError("Audio data is empty or invalid")
+            
+            # Send audio data
+            try:
+                audio_b64 = base64.b64encode(pcm_data).decode()
+            except Exception as e:
+                raise AIServiceProcessingError(f"Failed to encode audio data: {e}")
+            
+            audio_message = {
+                "type": "input_audio_buffer.append",
+                "audio": audio_b64
+            }
+            
+            await websocket.send(json.dumps(audio_message))
+            
+            # Commit the audio buffer
+            await websocket.send(json.dumps({
+                "type": "input_audio_buffer.commit"
+            }))
+            
+            # Request response generation
+            await websocket.send(json.dumps({
+                "type": "response.create"
+            }))
+        except AIServiceProcessingError:
+            # Re-raise AI service errors
+            raise
+        except Exception as e:
+            logger.error(f"Error sending audio data: {e}")
+            raise AIServiceProcessingError(f"Failed to send audio data: {e}")
     
     async def _receive_audio_responses(
         self, 
@@ -398,8 +414,13 @@ class OpenAIRealtimeService(AIServiceInterface):
                     
         except asyncio.TimeoutError:
             logger.warning(f"Timeout waiting for response in session {session_key}")
-        except Exception:
-            logger.info(f"WebSocket connection closed for session {session_key}")
+            raise AIServiceProcessingError(f"Timeout waiting for response in session {session_key}")
+        except AIServiceProcessingError:
+            # Re-raise AI service errors to propagate to client
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in WebSocket communication for session {session_key}: {e}")
+            raise AIServiceProcessingError(f"WebSocket communication error: {e}")
     
     async def _convert_to_pcm16(self, audio_data: bytes) -> bytes:
         """Convert audio data to PCM16 format (placeholder implementation)."""
