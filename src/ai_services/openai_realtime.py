@@ -2,18 +2,17 @@
 OpenAI Realtime API service implementation.
 
 This module implements the OpenAI Realtime API for direct speech-to-speech communication.
+Simplified for embedded device compatibility with raw PCM16 audio handling.
 """
 
 import asyncio
 import json
 import base64
 import time
-import io
-from typing import AsyncIterator, Dict, Any, Optional, Union
+from typing import AsyncIterator, Dict, Any, Optional
 
 import websockets
 from loguru import logger
-from pydub import AudioSegment
 
 from .base import (
     AIServiceInterface, 
@@ -30,14 +29,16 @@ class OpenAIRealtimeService(AIServiceInterface):
     OpenAI Realtime API service implementation.
     
     Provides direct speech-to-speech communication using OpenAI's Realtime API.
+    Simplified for embedded devices with raw PCM16 audio handling.
     """
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.api_key = config.get("api_key")
         self.model = config.get("model", "gpt-4o-realtime-preview")
-        # Base URL from configuration (supports environment variable OPENAI_BASE_URL)
         self.base_url = config.get("base_url", "wss://api.openai.com/v1/realtime")
+        self.voice = config.get("voice", "alloy")
+        self.instructions = config.get("instructions", "You are a helpful AI assistant responding to voice commands from IoT devices.")
         self.websocket: Optional[Any] = None
         self._active_sessions: Dict[str, Dict[str, Any]] = {}
         
@@ -72,37 +73,28 @@ class OpenAIRealtimeService(AIServiceInterface):
         Process streaming audio using OpenAI Realtime API.
         
         Args:
-            audio_request: Audio data and configuration
+            audio_request: Raw PCM16 audio data and session info
             
         Yields:
-            AudioResponse: Processed audio response chunks
+            AudioResponse: Processed PCM16 audio response chunks
         """
         session_key = self._create_session_key(audio_request.device_id, audio_request.session_id)
-        start_time = time.time()
         
         try:
             # Get or create session
             session_data = await self._get_or_create_session(audio_request)
             websocket = session_data["websocket"]
             
-            # Send audio data
+            # Send audio data (already PCM16)
             await self._send_audio_data(websocket, audio_request.audio_data)
             
             # Process responses
             chunk_id = 0
             async for response_chunk in self._receive_audio_responses(websocket, session_key):
-                processing_time = (time.time() - start_time) * 1000
-                
                 yield AudioResponse(
                     audio_data=response_chunk["audio_data"],
-                    format="mp3",
-                    transcript=response_chunk.get("transcript", ""),
-                    processing_time_ms=processing_time,
-                    cost_estimate=await self.estimate_cost(len(audio_request.audio_data) / 16000),
                     session_id=audio_request.session_id,
-                    chunk_id=chunk_id,
-                    total_chunks=1,  # Unknown for streaming
-                    metadata=response_chunk.get("metadata", {})
+                    chunk_id=chunk_id
                 )
                 chunk_id += 1
                 
@@ -185,8 +177,8 @@ class OpenAIRealtimeService(AIServiceInterface):
                 "type": "session.update",
                 "session": {
                     "modalities": ["text", "audio"],
-                    "instructions": "You are a helpful assistant.",
-                    "voice": "alloy"
+                    "instructions": self.instructions,
+                    "voice": self.voice
                 }
             }))
             
@@ -209,11 +201,9 @@ class OpenAIRealtimeService(AIServiceInterface):
             "real_time_translation": False,
         }
     
-    async def estimate_cost(self, audio_duration_seconds: float) -> float:
-        """Estimate cost based on OpenAI Realtime API pricing."""
-        # $0.24 per minute for input/output
-        minutes = audio_duration_seconds / 60
-        return round(minutes * 0.24, 4)
+    def _create_session_key(self, device_id: str, session_id: str) -> str:
+        """Create a unique session key for caching."""
+        return f"{device_id}:{session_id}"
     
     async def _get_or_create_session(self, audio_request: AudioRequest) -> Dict[str, Any]:
         """Get existing session or create a new one."""
@@ -230,7 +220,7 @@ class OpenAIRealtimeService(AIServiceInterface):
         websocket = await self._create_websocket_connection()
         
         # Initialize session
-        await self._initialize_session(websocket, audio_request)
+        await self._initialize_session(websocket)
         
         session_data = {
             "websocket": websocket,
@@ -289,25 +279,14 @@ class OpenAIRealtimeService(AIServiceInterface):
             
         raise AIServiceConnectionError(f"Failed to create WebSocket connection: {connection_error}")
     
-    async def _initialize_session(
-        self, 
-        websocket: Any, 
-        audio_request: AudioRequest
-    ) -> None:
+    async def _initialize_session(self, websocket: Any) -> None:
         """Initialize the OpenAI Realtime session."""
-        voice = audio_request.voice or "alloy"
-        additional_config = audio_request.additional_config or {}
-        instructions = additional_config.get(
-            "instructions", 
-            "You are a helpful AI assistant responding to voice commands from IoT devices."
-        )
-        
         session_config = {
             "type": "session.update",
             "session": {
                 "modalities": ["text", "audio"],
-                "instructions": instructions,
-                "voice": voice,
+                "instructions": self.instructions,
+                "voice": self.voice,
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {
@@ -325,23 +304,16 @@ class OpenAIRealtimeService(AIServiceInterface):
         if data.get("type") != "session.created":
             raise AIServiceProcessingError(f"Failed to create session: {data}")
     
-    async def _send_audio_data(
-        self, 
-        websocket: Any, 
-        audio_data: bytes
-    ) -> None:
-        """Send audio data to the OpenAI Realtime API."""
+    async def _send_audio_data(self, websocket: Any, audio_data: bytes) -> None:
+        """Send raw PCM16 audio data to the OpenAI Realtime API."""
         try:
-            # Convert MP3 to PCM16 if needed
-            pcm_data = await self._convert_to_pcm16(audio_data)
-            
             # Validate audio data
-            if not pcm_data:
+            if not audio_data:
                 raise AIServiceProcessingError("Audio data is empty or invalid")
             
-            # Send audio data
+            # Send audio data (already PCM16)
             try:
-                audio_b64 = base64.b64encode(pcm_data).decode()
+                audio_b64 = base64.b64encode(audio_data).decode()
             except Exception as e:
                 raise AIServiceProcessingError(f"Failed to encode audio data: {e}")
             
@@ -382,27 +354,14 @@ class OpenAIRealtimeService(AIServiceInterface):
                 message_type = data.get("type")
                 
                 if message_type == "response.audio.delta":
-                    # Audio chunk received
+                    # Audio chunk received (already PCM16)
                     audio_base64 = data.get("delta", "")
                     if audio_base64:
                         audio_data = base64.b64decode(audio_base64)
-                        # Convert PCM16 back to MP3
-                        mp3_data = await self._convert_from_pcm16(audio_data)
                         
                         yield {
-                            "audio_data": mp3_data,
-                            "transcript": "",
+                            "audio_data": audio_data,
                             "metadata": {"type": "audio_delta"}
-                        }
-                
-                elif message_type == "response.audio_transcript.delta":
-                    # Transcript chunk received
-                    transcript = data.get("delta", "")
-                    if transcript:
-                        yield {
-                            "audio_data": b"",
-                            "transcript": transcript,
-                            "metadata": {"type": "transcript_delta"}
                         }
                 
                 elif message_type == "response.done":
@@ -426,38 +385,4 @@ class OpenAIRealtimeService(AIServiceInterface):
             raise
         except Exception as e:
             logger.error(f"Unexpected error in WebSocket communication for session {session_key}: {e}")
-            raise AIServiceProcessingError(f"WebSocket communication error: {e}")
-    
-    async def _convert_to_pcm16(self, audio_data: bytes) -> bytes:
-        """Convert MP3 (or other) audio data to PCM16 24kHz mono."""
-        try:
-            # Decode MP3 to AudioSegment
-            audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="mp3")
-            # Ensure 24kHz, mono, 16-bit
-            audio_segment = (
-                audio_segment.set_frame_rate(24000)
-                .set_channels(1)
-                .set_sample_width(2)  # 2 bytes = 16-bit
-            )
-            return audio_segment.raw_data
-        except Exception as e:
-            logger.error(f"Audio conversion to PCM16 failed: {e}")
-            raise AIServiceProcessingError(f"Failed to convert audio to PCM16: {e}")
-
-    async def _convert_from_pcm16(self, pcm_data: bytes) -> bytes:
-        """Convert PCM16 24kHz mono data back to MP3 for client playback."""
-        try:
-            audio_segment = AudioSegment(
-                data=pcm_data,
-                sample_width=2,
-                frame_rate=24000,
-                channels=1,
-            )
-            buf = io.BytesIO()
-            # Export to MP3 with low bitrate to keep payload small
-            audio_segment.export(buf, format="mp3", bitrate="32k")
-            return buf.getvalue()
-        except Exception as e:
-            logger.error(f"Audio conversion from PCM16 failed: {e}")
-            # If conversion fails, return the raw PCM so client can still decode if desired
-            return pcm_data 
+            raise AIServiceProcessingError(f"WebSocket communication error: {e}") 

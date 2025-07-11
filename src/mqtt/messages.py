@@ -1,7 +1,8 @@
 """
 MQTT message format definitions.
 
-This module defines the message formats used for communication between IoT devices and the AI server.
+This module defines the simplified message formats used for communication between IoT devices and the AI server.
+Optimized for embedded devices with minimal processing overhead.
 """
 
 import json
@@ -21,17 +22,6 @@ class MessageType(Enum):
     ERROR = "error"
     SESSION_START = "session_start"
     SESSION_END = "session_end"
-
-
-@dataclass
-class AudioMetadata:
-    """Audio metadata for MQTT messages."""
-    format: str = "mp3"
-    sample_rate: int = 16000
-    channels: int = 1
-    chunk_id: int = 0
-    total_chunks: int = 1
-    duration_ms: Optional[float] = None
 
 
 @dataclass
@@ -78,33 +68,31 @@ class AudioMessage:
 
 @dataclass
 class AudioRequestMessage(AudioMessage):
-    """Audio request message from IoT device to AI server."""
+    """Simplified audio request message from IoT device to AI server."""
     
-    audio_data: str  # Base64 encoded audio data
-    audio_metadata: AudioMetadata
-    language: Optional[str] = None
-    voice: Optional[str] = None
-    instructions: Optional[str] = None
-    config: Optional[Dict[str, Any]] = None
+    audio_data: bytes  # Raw PCM16 audio data (24kHz, mono, 16-bit)
     
     def __post_init__(self) -> None:
         super().__post_init__()
         self.message_type = MessageType.AUDIO_REQUEST
     
-    def get_audio_bytes(self) -> bytes:
-        """Decode base64 audio data to bytes."""
-        return base64.b64decode(self.audio_data)
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert message to dictionary for JSON serialization."""
+        data = super().to_dict()
+        # Encode audio data as base64 for JSON transport
+        data["audio_data"] = base64.b64encode(self.audio_data).decode()
+        return data
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AudioRequestMessage":
-        """Create AudioRequestMessage from dictionary with proper nested object conversion."""
+        """Create AudioRequestMessage from dictionary."""
         # Convert message_type back to enum
         if "message_type" in data:
             data["message_type"] = MessageType(data["message_type"])
         
-        # Convert audio_metadata dict to AudioMetadata object
-        if "audio_metadata" in data and isinstance(data["audio_metadata"], dict):
-            data["audio_metadata"] = AudioMetadata(**data["audio_metadata"])
+        # Decode base64 audio data back to bytes
+        if "audio_data" in data and isinstance(data["audio_data"], str):
+            data["audio_data"] = base64.b64decode(data["audio_data"])
         
         return cls(**data)
     
@@ -114,21 +102,9 @@ class AudioRequestMessage(AudioMessage):
         device_id: str,
         audio_data: bytes,
         session_id: str = "",
-        audio_format: str = "mp3",
-        language: Optional[str] = None,
-        voice: Optional[str] = None,
-        instructions: Optional[str] = None,
-        chunk_id: int = 0,
-        total_chunks: int = 1,
         **kwargs: Any
     ) -> "AudioRequestMessage":
-        """Create an audio request message."""
-        
-        audio_metadata = AudioMetadata(
-            format=audio_format,
-            chunk_id=chunk_id,
-            total_chunks=total_chunks
-        )
+        """Create a simplified audio request message."""
         
         return cls(
             message_id=str(uuid.uuid4()),
@@ -136,44 +112,37 @@ class AudioRequestMessage(AudioMessage):
             timestamp=time.time(),
             message_type=MessageType.AUDIO_REQUEST,
             session_id=session_id or str(uuid.uuid4()),
-            audio_data=base64.b64encode(audio_data).decode(),
-            audio_metadata=audio_metadata,
-            language=language,
-            voice=voice,
-            instructions=instructions,
-            config=kwargs
+            audio_data=audio_data
         )
 
 
 @dataclass
 class AudioResponseMessage(AudioMessage):
-    """Audio response message from AI server to IoT device."""
+    """Simplified audio response message from AI server to IoT device."""
     
-    audio_data: str  # Base64 encoded audio response
-    audio_metadata: AudioMetadata
-    transcript: str = ""
-    processing_time_ms: float = 0.0
-    cost_estimate: float = 0.0
-    response_metadata: Optional[Dict[str, Any]] = None
+    audio_data: bytes  # Raw PCM16 audio response (24kHz, mono, 16-bit)
     
     def __post_init__(self) -> None:
         super().__post_init__()
         self.message_type = MessageType.AUDIO_RESPONSE
     
-    def get_audio_bytes(self) -> bytes:
-        """Decode base64 audio data to bytes."""
-        return base64.b64decode(self.audio_data)
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert message to dictionary for JSON serialization."""
+        data = super().to_dict()
+        # Encode audio data as base64 for JSON transport
+        data["audio_data"] = base64.b64encode(self.audio_data).decode()
+        return data
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AudioResponseMessage":
-        """Create AudioResponseMessage from dictionary with proper nested object conversion."""
+        """Create AudioResponseMessage from dictionary."""
         # Convert message_type back to enum
         if "message_type" in data:
             data["message_type"] = MessageType(data["message_type"])
         
-        # Convert audio_metadata dict to AudioMetadata object
-        if "audio_metadata" in data and isinstance(data["audio_metadata"], dict):
-            data["audio_metadata"] = AudioMetadata(**data["audio_metadata"])
+        # Decode base64 audio data back to bytes
+        if "audio_data" in data and isinstance(data["audio_data"], str):
+            data["audio_data"] = base64.b64decode(data["audio_data"])
         
         return cls(**data)
     
@@ -182,20 +151,9 @@ class AudioResponseMessage(AudioMessage):
         cls,
         request_message: AudioRequestMessage,
         audio_data: bytes,
-        transcript: str = "",
-        processing_time_ms: float = 0.0,
-        cost_estimate: float = 0.0,
-        chunk_id: int = 0,
-        total_chunks: int = 1,
-        metadata: Optional[Dict[str, Any]] = None
+        **kwargs: Any
     ) -> "AudioResponseMessage":
-        """Create an audio response message from a request."""
-        
-        audio_metadata = AudioMetadata(
-            format=request_message.audio_metadata.format,
-            chunk_id=chunk_id,
-            total_chunks=total_chunks
-        )
+        """Create a simplified audio response message from a request."""
         
         return cls(
             message_id=str(uuid.uuid4()),
@@ -203,12 +161,7 @@ class AudioResponseMessage(AudioMessage):
             timestamp=time.time(),
             message_type=MessageType.AUDIO_RESPONSE,
             session_id=request_message.session_id,
-            audio_data=base64.b64encode(audio_data).decode(),
-            audio_metadata=audio_metadata,
-            transcript=transcript,
-            processing_time_ms=processing_time_ms,
-            cost_estimate=cost_estimate,
-            response_metadata=metadata
+            audio_data=audio_data
         )
 
 

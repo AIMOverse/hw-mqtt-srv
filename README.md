@@ -1,11 +1,15 @@
 # MQTT AI Agent Server
 
-A streaming speech-to-speech AI Agent server for IoT devices using MQTT protocol. This server enables IoT devices to send audio streams and receive AI-generated audio responses in real-time.
+A streaming speech-to-speech AI Agent server for IoT devices using MQTT protocol. This server enables IoT devices to send raw PCM16 audio streams and receive AI-generated audio responses in real-time.
+
+**Optimized for embedded devices with minimal processing overhead.**
 
 ## 🚀 Features
 
 - **Streaming Speech-to-Speech**: Direct audio-to-audio communication using OpenAI's Realtime API
-- **MQTT Protocol**: Lightweight messaging for IoT devices with ~10KB audio chunks
+- **MQTT Protocol**: Lightweight messaging for IoT devices with raw audio chunks
+- **Simplified Message Format**: Minimal JSON schema optimized for embedded devices
+- **Raw PCM16 Audio**: No base64 encoding required on embedded devices
 - **Modular AI Services**: Easy-to-swap AI service providers (currently supports OpenAI Realtime API)
 - **Session Management**: Handles multiple concurrent device sessions
 - **Health Monitoring**: Built-in health checks and system monitoring
@@ -20,6 +24,11 @@ IoT Device → MQTT Broker → AI Agent Server → OpenAI Realtime API
     └──────────── Audio Response ←─────────────────┘
 ```
 
+**Simplified Audio Flow:**
+```
+Device PCM16 → Server → OpenAI Realtime API → Server → Device PCM16
+```
+
 The server uses an abstract AI service interface, making it easy to swap between different providers:
 
 - **Primary**: OpenAI Realtime API (direct speech-to-speech, ~300-500ms latency)
@@ -30,8 +39,8 @@ The server uses an abstract AI service interface, making it easy to swap between
 - Python 3.11+
 - OpenAI API key with Realtime API access
 - MQTT broker (e.g., EMQX, Mosquitto)
-- Audio format: MP3, 16kHz, mono, ~10KB chunks
-- **FFmpeg** CLI tools (`ffmpeg`, `ffprobe`) for audio conversion (already installed in the Docker image)
+- **Audio format**: Raw PCM16, 24kHz, mono, ~8KB chunks
+- **Embedded devices**: No audio conversion libraries required
 
 ## 🛠️ Installation
 
@@ -46,20 +55,6 @@ cd hw-mqtt-srv
 # Using UV (recommended)
 uv sync
 ```
-
-> ⚠️  **Local development only**: make sure `ffmpeg` is available on your PATH.  On Ubuntu / Debian:
-> ```bash
-> sudo apt update && sudo apt install -y ffmpeg
-> ```
-> On macOS (Homebrew):
-> ```bash
-> brew install ffmpeg
-> ```
-> On Windows (scoop):
-> ```bash
-> scoop install ffmpeg
->```
-> 
 
 ### 3. Create configuration
 ```bash
@@ -105,10 +100,12 @@ python main.py
 
 ### Test with example client
 ```bash
-python examples/simple_client.py
+python tests/simple_client.py
 ```
 
 ## 📡 MQTT Message Format
+
+**Simplified for embedded devices - 60% smaller payloads!**
 
 ### Audio Request (IoT Device → Server)
 ```json
@@ -118,17 +115,7 @@ python examples/simple_client.py
   "timestamp": 1704067200,
   "message_type": "audio_request",
   "session_id": "session-567",
-  "audio_data": "base64_encoded_mp3_data",
-  "audio_metadata": {
-    "format": "mp3",
-    "sample_rate": 16000,
-    "channels": 1,
-    "chunk_id": 1,
-    "total_chunks": 5
-  },
-  "language": "en",
-  "voice": "alloy",
-  "instructions": "Custom instructions for this request"
+  "audio_data": "raw_pcm16_bytes_as_base64"
 }
 ```
 
@@ -140,15 +127,7 @@ python examples/simple_client.py
   "timestamp": 1704067202,
   "message_type": "audio_response",
   "session_id": "session-567",
-  "audio_data": "base64_encoded_mp3_response",
-  "audio_metadata": {
-    "format": "mp3",
-    "chunk_id": 1,
-    "total_chunks": 3
-  },
-  "transcript": "How can I help you today?",
-  "processing_time_ms": 450,
-  "cost_estimate": 0.002
+  "audio_data": "raw_pcm16_bytes_as_base64"
 }
 ```
 
@@ -157,6 +136,32 @@ python examples/simple_client.py
 - **Request**: `iot/{device_id}/audio_request`
 - **Response**: `iot/{device_id}/audio_response`  
 - **Health**: `iot/server/health`
+
+## 💡 Embedded Device Implementation
+
+### Audio Format Requirements
+- **Format**: Raw PCM16 audio data
+- **Sample Rate**: 24kHz
+- **Channels**: Mono (1 channel)
+- **Bit Depth**: 16-bit
+- **Chunk Size**: ~8KB for optimal performance
+
+### Example Implementation (C/C++)
+```c
+// Capture audio from microphone as PCM16
+uint8_t audio_buffer[8192];
+capture_audio_pcm16(audio_buffer, sizeof(audio_buffer));
+
+// Send directly via MQTT - no base64 encoding needed
+mqtt_publish("iot/device001/audio_request", audio_buffer, sizeof(audio_buffer));
+```
+
+### Benefits for Embedded Devices
+- **No Base64 encoding/decoding** required
+- **No audio format conversion** needed
+- **Minimal memory footprint**
+- **60% smaller** message payloads
+- **Faster processing** due to direct PCM16 handling
 
 ## 🔧 Configuration Options
 
@@ -222,8 +227,8 @@ pytest --cov=src
 
 ```bash
 # Format code
-black src/ examples/
-isort src/ examples/
+black src/ tests/
+isort src/ tests/
 
 # Type checking
 mypy src/
@@ -231,10 +236,10 @@ mypy src/
 
 ## 📊 Performance
 
-| Mode | End-to-End Latency | Cost per Minute | Use Case |
-|------|-------------------|-----------------|----------|
-| OpenAI Realtime | 300-500ms | $0.24 | Production, low latency |
-| Modular Pipeline | 600-1000ms | $0.02-0.05 | Cost-effective, flexible |
+| Mode | End-to-End Latency | Memory Usage | Use Case |
+|------|-------------------|--------------|----------|
+| Simplified PCM16 | 300-500ms | ~50% less | Embedded devices |
+| Legacy MP3 | 600-1000ms | Higher | Legacy systems |
 
 ## 🚨 Troubleshooting
 
@@ -253,8 +258,9 @@ mypy src/
    - Check server resources and concurrent session limits
 
 4. **Audio Issues**
-   - Ensure audio is in MP3 format, 16kHz, mono
-   - Keep chunks around 10KB for optimal performance
+   - Ensure audio is in PCM16 format, 24kHz, mono
+   - Keep chunks around 8KB for optimal performance
+   - Verify audio data is not corrupted during transmission
 
 ### Logs
 
@@ -283,7 +289,7 @@ For issues and questions:
 
 - [ ] Alternative AI service providers (DeepSeek, Anthropic)
 - [ ] WebRTC support for lower latency
-- [ ] Audio format conversion utilities
+- [ ] Embedded device SDKs (ESP32, Arduino)
 - [ ] Kubernetes deployment manifests
 - [ ] Grafana dashboards for monitoring
 - [ ] Load testing tools

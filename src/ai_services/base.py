@@ -3,6 +3,7 @@ Abstract base class for AI services.
 
 This module defines the interface that all AI service providers must implement,
 making it easy to swap between different providers (OpenAI, DeepSeek, etc.).
+Simplified for embedded device compatibility.
 """
 
 from abc import ABC, abstractmethod
@@ -13,32 +14,20 @@ import asyncio
 
 @dataclass
 class AudioRequest:
-    """Request object for audio processing."""
+    """Simplified request object for audio processing."""
     
-    audio_data: bytes
-    format: str = "mp3"
-    sample_rate: int = 16000
-    channels: int = 1
+    audio_data: bytes  # Raw PCM16 audio data (24kHz, mono, 16-bit)
     session_id: str = ""
     device_id: str = ""
-    language: Optional[str] = None
-    voice: Optional[str] = None
-    additional_config: Optional[Dict[str, Any]] = None
 
 
 @dataclass 
 class AudioResponse:
-    """Response object containing processed audio and metadata."""
+    """Simplified response object containing processed audio."""
     
-    audio_data: bytes
-    format: str = "mp3"
-    transcript: str = ""
-    processing_time_ms: float = 0.0
-    cost_estimate: float = 0.0
+    audio_data: bytes  # Raw PCM16 audio response (24kHz, mono, 16-bit)
     session_id: str = ""
     chunk_id: int = 0
-    total_chunks: int = 1
-    metadata: Optional[Dict[str, Any]] = None
 
 
 class AIServiceInterface(ABC):
@@ -47,6 +36,7 @@ class AIServiceInterface(ABC):
     
     This interface allows easy swapping between different AI service providers
     while maintaining a consistent API for the MQTT server.
+    Simplified for embedded device compatibility.
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -73,14 +63,14 @@ class AIServiceInterface(ABC):
         Process streaming audio and yield response chunks.
         
         Args:
-            audio_request: Audio data and configuration
+            audio_request: Raw PCM16 audio data and session info
             
         Yields:
-            AudioResponse: Processed audio response chunks
+            AudioResponse: Processed PCM16 audio response chunks
         """
         # This should be implemented as an async generator that yields AudioResponse objects
         # Example implementation:
-        # yield AudioResponse(audio_data=b"", transcript="", ...)
+        # yield AudioResponse(audio_data=b"", session_id="", chunk_id=0)
         if False:  # This ensures the method is recognized as an async generator
             yield AudioResponse(audio_data=b"")
         raise NotImplementedError("Must be implemented as async generator")
@@ -91,7 +81,7 @@ class AIServiceInterface(ABC):
         pass
     
     def get_supported_features(self) -> Dict[str, bool]:
-        """Return a dictionary of supported features."""
+        """Return supported features for this AI service."""
         return {
             "streaming": True,
             "voice_activity_detection": False,
@@ -99,46 +89,24 @@ class AIServiceInterface(ABC):
             "language_detection": False,
             "real_time_translation": False,
         }
-    
-    async def estimate_cost(self, audio_duration_seconds: float) -> float:
-        """Estimate the cost for processing audio of given duration."""
-        return 0.0
-    
-    def _create_session_key(self, device_id: str, session_id: str) -> str:
-        """Create a unique session key for caching."""
-        return f"{device_id}:{session_id}"
-    
-    def _get_session_data(self, device_id: str, session_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieve session data from cache."""
-        key = self._create_session_key(device_id, session_id)
-        return self._session_cache.get(key)
-    
-    def _store_session_data(self, device_id: str, session_id: str, data: Dict[str, Any]) -> None:
-        """Store session data in cache."""
-        key = self._create_session_key(device_id, session_id)
-        self._session_cache[key] = data
-    
-    def _clear_session_data(self, device_id: str, session_id: str) -> None:
-        """Clear session data from cache."""
-        key = self._create_session_key(device_id, session_id)
-        self._session_cache.pop(key, None)
 
 
+# Exception classes for AI service errors
 class AIServiceError(Exception):
     """Base exception for AI service errors."""
     pass
 
 
 class AIServiceConnectionError(AIServiceError):
-    """Exception raised when AI service connection fails."""
+    """Exception raised when connection to AI service fails."""
     pass
 
 
 class AIServiceProcessingError(AIServiceError):
-    """Exception raised when AI service processing fails."""
+    """Exception raised when audio processing fails."""
     pass
 
 
 class AIServiceRateLimitError(AIServiceError):
-    """Exception raised when AI service rate limit is exceeded."""
+    """Exception raised when rate limit is exceeded."""
     pass 

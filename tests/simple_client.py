@@ -2,7 +2,8 @@
 Simple MQTT client example for IoT devices.
 
 This example shows how an IoT device can send audio requests and receive responses
-from the MQTT AI Agent server.
+from the MQTT AI Agent server using the simplified message format.
+Optimized for embedded device compatibility.
 """
 
 import asyncio
@@ -11,6 +12,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Optional, List
 
 import paho.mqtt.client as mqtt
 
@@ -18,7 +20,6 @@ import paho.mqtt.client as mqtt
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.mqtt.messages import AudioRequestMessage, AudioResponseMessage, ErrorMessage, MessageParser, MessageType
-from typing import Optional, List
 
 
 class SimpleIoTClient:
@@ -92,10 +93,7 @@ class SimpleIoTClient:
                 self.responses_received += 1
                 print(f"\n--- Audio Response #{self.responses_received} ---")
                 print(f"Session ID: {message.session_id}")
-                print(f"Transcript: {message.transcript}")
-                print(f"Processing time: {message.processing_time_ms:.2f}ms")
-                print(f"Cost estimate: ${message.cost_estimate:.4f}")
-                print(f"Audio data size: {len(message.get_audio_bytes())} bytes")
+                print(f"Audio data size: {len(message.audio_data)} bytes")
                 print("----------------------------------------")
                 
             elif message.message_type == MessageType.ERROR and isinstance(message, ErrorMessage):
@@ -112,29 +110,14 @@ class SimpleIoTClient:
         except Exception as e:
             print(f"Error processing message: {e}")
     
-    def send_audio_chunk(
-        self, 
-        audio_chunk: bytes, 
-        session_id: str,
-        chunk_id: int,
-        total_chunks: int,
-        language: Optional[str] = None,
-        voice: Optional[str] = None,
-        instructions: Optional[str] = None
-    ) -> bool:
-        """Send an audio chunk to the server."""
+    def send_audio_chunk(self, audio_chunk: bytes, session_id: str) -> bool:
+        """Send a simplified audio chunk to the server."""
         
-        # Create audio request message
+        # Create simplified audio request message
         request = AudioRequestMessage.create(
             device_id=self.device_id,
             audio_data=audio_chunk,
-            session_id=session_id,
-            audio_format="mp3",
-            language=language,
-            voice=voice,
-            instructions=instructions,
-            chunk_id=chunk_id,
-            total_chunks=total_chunks
+            session_id=session_id
         )
         
         # Publish to request topic
@@ -145,15 +128,46 @@ class SimpleIoTClient:
         )
         
         if result.rc == mqtt.MQTT_ERR_SUCCESS:
-            print(f"Sent audio chunk {chunk_id}/{total_chunks} (session: {session_id}) - {len(audio_chunk)} bytes")
+            print(f"Sent audio chunk (session: {session_id}) - {len(audio_chunk)} bytes")
             return True
         else:
             print(f"Failed to send audio chunk: {result.rc}")
             return False
 
 
-def load_and_chunk_audio(chunk_size: int = 8192) -> List[bytes]:
-    """Load the test.mp3 audio file and split it into chunks."""
+def convert_mp3_to_pcm16(mp3_data: bytes) -> bytes:
+    """
+    Convert MP3 data to PCM16 format for testing.
+    In production, embedded devices would send PCM16 directly.
+    """
+    try:
+        # Try to use pydub if available (for development/testing)
+        from pydub import AudioSegment
+        import io
+        
+        # Decode MP3 to AudioSegment
+        audio_segment = AudioSegment.from_file(io.BytesIO(mp3_data), format="mp3")
+        
+        # Convert to PCM16 24kHz mono format (as expected by OpenAI)
+        audio_segment = (
+            audio_segment.set_frame_rate(24000)
+            .set_channels(1)
+            .set_sample_width(2)  # 2 bytes = 16-bit
+        )
+        
+        return audio_segment.raw_data
+        
+    except ImportError:
+        print("Warning: pydub not available for MP3 conversion. Using raw MP3 data.")
+        print("Note: In production, embedded devices should send PCM16 directly.")
+        return mp3_data
+
+
+def load_and_convert_audio(chunk_size: int = 8192) -> List[bytes]:
+    """
+    Load the test.mp3 audio file, convert to PCM16, and split into chunks.
+    This simulates what embedded devices would send (raw PCM16 chunks).
+    """
     # Path to the test audio file
     audio_file_path = Path(__file__).parent.parent / "audio" / "test.mp3"
     
@@ -162,25 +176,31 @@ def load_and_chunk_audio(chunk_size: int = 8192) -> List[bytes]:
     
     # Read the MP3 file
     with open(audio_file_path, 'rb') as f:
-        audio_data = f.read()
+        mp3_data = f.read()
     
     print(f"Loaded test audio file: {audio_file_path}")
-    print(f"Audio file size: {len(audio_data)} bytes")
+    print(f"MP3 file size: {len(mp3_data)} bytes")
+    
+    # Convert MP3 to PCM16 (simulating embedded device behavior)
+    pcm16_data = convert_mp3_to_pcm16(mp3_data)
+    print(f"Converted to PCM16 size: {len(pcm16_data)} bytes")
     
     # Split into chunks
     chunks = []
-    for i in range(0, len(audio_data), chunk_size):
-        chunk = audio_data[i:i + chunk_size]
+    for i in range(0, len(pcm16_data), chunk_size):
+        chunk = pcm16_data[i:i + chunk_size]
         chunks.append(chunk)
     
-    print(f"Split audio into {len(chunks)} chunks of ~{chunk_size} bytes each")
+    print(f"Split PCM16 audio into {len(chunks)} chunks of ~{chunk_size} bytes each")
     return chunks
 
 
 async def main():
     """Main example function."""
     print("MQTT AI Agent - Simple IoT Client Example")
-    print("==========================================")
+    print("=========================================")
+    print("Testing simplified message format with raw PCM16 audio")
+    print()
     
     # Configuration
     device_id = "test-device-001"
@@ -193,8 +213,8 @@ async def main():
     try:
         client.connect()
         
-        # Load and chunk test audio data
-        audio_chunks = load_and_chunk_audio(chunk_size=8192)  # 8KB chunks
+        # Load and convert test audio data to PCM16
+        audio_chunks = load_and_convert_audio(chunk_size=8192)  # 8KB chunks
         
         print(f"\nSending test audio request in {len(audio_chunks)} chunks...")
         
@@ -209,12 +229,7 @@ async def main():
                 
             success = client.send_audio_chunk(
                 audio_chunk=chunk,
-                session_id=session_id,
-                chunk_id=i,
-                total_chunks=len(audio_chunks),
-                language="en",
-                voice="alloy",
-                instructions="Please respond briefly to this voice message."
+                session_id=session_id
             )
             
             if not success:
