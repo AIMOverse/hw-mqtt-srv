@@ -115,7 +115,7 @@ python tests/simple_client.py
   "timestamp": 1704067200,
   "message_type": "audio_request",
   "session_id": "session-567",
-  "audio_data": "raw_pcm16_bytes_as_base64"
+  "audio_data": "raw_pcm16_bytes"
 }
 ```
 
@@ -127,7 +127,7 @@ python tests/simple_client.py
   "timestamp": 1704067202,
   "message_type": "audio_response",
   "session_id": "session-567",
-  "audio_data": "raw_pcm16_bytes_as_base64"
+  "audio_data": "raw_pcm16_bytes"
 }
 ```
 
